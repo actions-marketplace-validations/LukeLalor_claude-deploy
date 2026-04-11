@@ -30949,9 +30949,8 @@ async function run() {
             version = currentAgent.version;
             info(`Current agent version: ${version}`);
         }
-        // Build update body: config (without any version field) + resolved version
-        const { version: _ignored, ...configWithoutVersion } = agentConfig;
-        const updateBody = { ...configWithoutVersion, version };
+        // Build update body: config + resolved version (overrides any version in config)
+        const updateBody = { ...agentConfig, version };
         // POST to update the agent
         info(`Updating agent ${agentId}...`);
         const postResponse = await fetch(agentUrl, {

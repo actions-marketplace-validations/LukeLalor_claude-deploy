@@ -1,10 +1,14 @@
 # Deploy Claude Agent
 
-A GitHub Action to deploy [Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) from version control.
+A GitHub Action to deploy
+[Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview)
+from version control.
 
 ## Why?
 
-Managed agents are HTTP services. Like any other service, their configuration should live in version control. The fact that instructions are written in prose instead of code doesn't change this. Agents as code.
+Managed agents are HTTP services. Like any other service, their configuration
+should live in version control. The fact that instructions are written in prose
+instead of code doesn't change this. Agents as code.
 
 ## Example
 
@@ -56,21 +60,25 @@ curl -s https://api.anthropic.com/v1/agents/$AGENT_ID -H 'anthropic-version: 202
 
 ## Inputs
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| `agent_id` | Yes | The ID of the Claude agent to update |
-| `config_file` | Yes | Path to the agent YAML config file (relative to repo root) |
-| `anthropic_api_key` | Yes | Anthropic API key with permission to manage agents |
+| Input               | Required | Description                                                      |
+| ------------------- | -------- | ---------------------------------------------------------------- |
+| `agent_id`          | Yes      | The ID of the Claude agent to update                             |
+| `config_file`       | Yes      | Path to the agent YAML config file (relative to repository root) |
+| `anthropic_api_key` | Yes      | Anthropic API key with permission to manage agents               |
 
 ## Outputs
 
-| Output | Description |
-|--------|-------------|
+| Output    | Description                        |
+| --------- | ---------------------------------- |
 | `version` | The agent version after the update |
 
 ## Pinning a version
 
-By default the action fetches the current version from the API automatically and passes it through with the update. To control versioning yourself, include `version` explicitly in your config file. Note that update operations will fail if the version is out of date, so opting in to this means you are responsible for keeping it in sync.
+By default the action fetches the current version from the API automatically and
+passes it through with the update. To control versioning yourself, include
+`version` explicitly in your config file. Note that update operations will fail
+if the version is out of date, so opting in to this means you are responsible
+for keeping it in sync.
 
 ```yaml
 name: My Agent
