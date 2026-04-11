@@ -1,62 +1,187 @@
-/**
- * Unit tests for the action's main functionality, src/main.ts
- *
- * To mock dependencies in ESM, you can create fixtures that export mock
- * functions and objects. For example, the core module is mocked in this test,
- * so that the actual '@actions/core' module is not imported.
- */
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
-import { wait } from '../__fixtures__/wait.js'
 
-// Mocks should be declared before the module being tested is imported.
+const mockReadFileSync = jest.fn<typeof import('fs').readFileSync>()
+
+jest.unstable_mockModule('fs', () => ({
+  readFileSync: mockReadFileSync
+}))
+
 jest.unstable_mockModule('@actions/core', () => core)
-jest.unstable_mockModule('../src/wait.js', () => ({ wait }))
 
-// The module being tested should be imported dynamically. This ensures that the
-// mocks are used in place of any actual dependencies.
 const { run } = await import('../src/main.js')
+
+const AGENT_YAML = `
+name: My Test Agent
+description: A test agent
+model: claude-opus-4-6
+`
+
+const AGENT_YAML_WITH_VERSION = `
+name: My Test Agent
+description: A test agent
+model: claude-opus-4-6
+version: 3
+`
+
+const mockFetch = jest.fn<typeof fetch>()
 
 describe('main.ts', () => {
   beforeEach(() => {
-    // Set the action's inputs as return values from core.getInput().
-    core.getInput.mockImplementation(() => '500')
+    global.fetch = mockFetch
 
-    // Mock the wait function so that it does not actually wait.
-    wait.mockImplementation(() => Promise.resolve('done!'))
+    core.getInput.mockImplementation((name: string) => {
+      switch (name) {
+        case 'agent_id':
+          return 'agent_abc123'
+        case 'config_file':
+          return 'agent.yml'
+        case 'anthropic_api_key':
+          return 'sk-ant-test'
+        default:
+          return ''
+      }
+    })
+
+    mockReadFileSync.mockReturnValue(AGENT_YAML)
+
+    // Default: GET succeeds with version 5
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'agent_abc123',
+        version: 5,
+        name: 'My Test Agent'
+      })
+    } as Response)
+
+    // Default: POST succeeds returning version 6
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'agent_abc123',
+        version: 6,
+        name: 'My Test Agent'
+      })
+    } as Response)
   })
 
   afterEach(() => {
     jest.resetAllMocks()
   })
 
-  it('Sets the time output', async () => {
+  it('GETs the current version then POSTs the update', async () => {
     await run()
 
-    // Verify the time output was set.
-    expect(core.setOutput).toHaveBeenNthCalledWith(
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
       1,
-      'time',
-      // Simple regex to match a time string in the format HH:MM:SS.
-      expect.stringMatching(/^\d{2}:\d{2}:\d{2}/)
+      'https://api.anthropic.com/v1/agents/agent_abc123',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'managed-agents-2026-04-01',
+          'X-Api-Key': 'sk-ant-test'
+        })
+      })
+    )
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://api.anthropic.com/v1/agents/agent_abc123',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'managed-agents-2026-04-01',
+          'X-Api-Key': 'sk-ant-test'
+        }),
+        body: expect.stringContaining('"version":5')
+      })
     )
   })
 
-  it('Sets a failed status', async () => {
-    // Clear the getInput mock and return an invalid value.
-    core.getInput.mockClear().mockReturnValueOnce('this is not a number')
+  it('sets the version output to the new version', async () => {
+    await run()
 
-    // Clear the wait mock and return a rejected promise.
-    wait
-      .mockClear()
-      .mockRejectedValueOnce(new Error('milliseconds is not a number'))
+    expect(core.setOutput).toHaveBeenCalledWith('version', '6')
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('uses version from config file and skips GET when version is specified', async () => {
+    mockReadFileSync.mockReturnValue(AGENT_YAML_WITH_VERSION)
+    mockFetch.mockReset()
+
+    // Only one fetch call expected (the POST)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'agent_abc123',
+        version: 3,
+        name: 'My Test Agent'
+      })
+    } as Response)
 
     await run()
 
-    // Verify that the action was marked as failed.
-    expect(core.setFailed).toHaveBeenNthCalledWith(
-      1,
-      'milliseconds is not a number'
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.anthropic.com/v1/agents/agent_abc123',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"version":3')
+      })
     )
+    expect(core.warning).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('version', '3')
+  })
+
+  it('fails and skips the update when GET returns a non-OK status', async () => {
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => '{"error":{"message":"Agent not found"}}'
+    } as Response)
+
+    await run()
+
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to get agent agent_abc123')
+    )
+  })
+
+  it('fails when the POST update returns a non-OK status', async () => {
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 'agent_abc123', version: 5 })
+    } as Response)
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      statusText: 'Unprocessable Entity',
+      text: async () => '{"error":{"message":"Invalid config"}}'
+    } as Response)
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to update agent agent_abc123')
+    )
+  })
+
+  it('fails when the config file contains invalid YAML', async () => {
+    mockReadFileSync.mockReturnValue(null)
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalled()
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

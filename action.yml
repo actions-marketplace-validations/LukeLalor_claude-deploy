@@ -1,23 +1,29 @@
-name: The name of your action here
-description: Provide a description here
-author: Your name or organization here
+name: Deploy Claude Agent
+description:
+  Deploy a managed Claude agent from a YAML configuration file in version
+  control
+author: Anthropic
 
-# Add your action's branding here. This will appear on the GitHub Marketplace.
 branding:
-  icon: heart
-  color: red
+  icon: upload-cloud
+  color: purple
 
-# Define your inputs here.
 inputs:
-  milliseconds:
-    description: Your input description here
+  agent_id:
+    description: The ID of the Claude agent to update
     required: true
-    default: '1000'
+  config_file:
+    description: >-
+      Path to the YAML configuration file for the agent (relative to the
+      repository root)
+    required: true
+  anthropic_api_key:
+    description: Anthropic API key with permission to manage agents
+    required: true
 
-# Define your outputs here.
 outputs:
-  time:
-    description: Your output description here
+  version:
+    description: The version of the agent after the update
 
 runs:
   using: node24

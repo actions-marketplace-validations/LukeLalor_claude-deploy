@@ -1,27 +1,87 @@
 import * as core from '@actions/core'
-import { wait } from './wait.js'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as yaml from 'js-yaml'
 
-/**
- * The main function for the action.
- *
- * @returns Resolves when the action is complete.
- */
+const ANTHROPIC_API_BASE = 'https://api.anthropic.com/v1'
+
+function buildHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'anthropic-beta': 'managed-agents-2026-04-01',
+    'X-Api-Key': apiKey
+  }
+}
+
 export async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
+    const agentId = core.getInput('agent_id', { required: true })
+    const configFile = core.getInput('config_file', { required: true })
+    const apiKey = core.getInput('anthropic_api_key', { required: true })
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    const workspace = process.env.GITHUB_WORKSPACE ?? '.'
+    const filePath = path.resolve(workspace, configFile)
 
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    core.info(`Reading agent configuration from ${filePath}`)
+    const fileContent = fs.readFileSync(filePath, 'utf-8')
 
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    const agentConfig = yaml.load(fileContent) as Record<string, unknown>
+    if (!agentConfig || typeof agentConfig !== 'object') {
+      throw new Error(`Invalid or empty YAML in ${configFile}`)
+    }
+
+    const headers = buildHeaders(apiKey)
+    const agentUrl = `${ANTHROPIC_API_BASE}/agents/${agentId}`
+
+    let version: number
+
+    if ('version' in agentConfig) {
+      version = agentConfig.version as number
+      core.info(`Using version ${version} from config file`)
+    } else {
+      // GET current agent to obtain the version required for updates
+      core.info(`Fetching current agent version for ${agentId}...`)
+      const getResponse = await fetch(agentUrl, { method: 'GET', headers })
+
+      if (!getResponse.ok) {
+        const body = await getResponse.text()
+        throw new Error(
+          `Failed to get agent ${agentId}: ${getResponse.status} ${getResponse.statusText}\n${body}`
+        )
+      }
+
+      const currentAgent = (await getResponse.json()) as Record<string, unknown>
+      version = currentAgent.version as number
+      core.info(`Current agent version: ${version}`)
+    }
+
+    // Build update body: config (without any version field) + resolved version
+    const { version: _ignored, ...configWithoutVersion } = agentConfig
+    const updateBody = { ...configWithoutVersion, version }
+
+    // POST to update the agent
+    core.info(`Updating agent ${agentId}...`)
+    const postResponse = await fetch(agentUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(updateBody)
+    })
+
+    if (!postResponse.ok) {
+      const body = await postResponse.text()
+      throw new Error(
+        `Failed to update agent ${agentId}: ${postResponse.status} ${postResponse.statusText}\n${body}`
+      )
+    }
+
+    const updatedAgent = (await postResponse.json()) as Record<string, unknown>
+    const newVersion = updatedAgent.version as number
+    core.info(
+      `Agent ${agentId} updated successfully. New version: ${newVersion}`
+    )
+    core.setOutput('version', String(newVersion))
   } catch (error) {
-    // Fail the workflow run if an error occurs
     if (error instanceof Error) core.setFailed(error.message)
   }
 }

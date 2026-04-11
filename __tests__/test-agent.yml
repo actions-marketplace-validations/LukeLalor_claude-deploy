@@ -1,0 +1,16 @@
+name: Test Agent
+description: A general-purpose starter agent. Deployed via claude-deploy.
+model:
+  id: claude-sonnet-4-6
+  speed: standard
+system: You are a general-purpose agent
+tools:
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: true
+      permission_policy:
+        type: always_allow
+    configs: []
+mcp_servers: []
+skills: []
+metadata: {}
