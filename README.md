@@ -32,7 +32,7 @@ jobs:
 
       - name: Deploy agent
         id: deploy
-        uses: anthropics/claude-deploy@v1
+        uses: LukeLalor/claude-deploy@v1
         with:
           agent_id: ${{ vars.AGENT_ID }}
           config_file: agents/my-agent.yml
