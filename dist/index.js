@@ -28059,6 +28059,27 @@ function getInput(name, options) {
     return val.trim();
 }
 /**
+ * Gets the input value of the boolean type in the YAML 1.2 "core schema" specification.
+ * Support boolean input list: `true | True | TRUE | false | False | FALSE` .
+ * The return value is also in boolean type.
+ * ref: https://yaml.org/spec/1.2/spec.html#id2804923
+ *
+ * @param     name     name of the input to get
+ * @param     options  optional. See InputOptions.
+ * @returns   boolean
+ */
+function getBooleanInput(name, options) {
+    const trueValue = ['true', 'True', 'TRUE'];
+    const falseValue = ['false', 'False', 'FALSE'];
+    const val = getInput(name, options);
+    if (trueValue.includes(val))
+        return true;
+    if (falseValue.includes(val))
+        return false;
+    throw new TypeError(`Input does not meet YAML 1.2 "Core Schema" specification: ${name}\n` +
+        `Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
+}
+/**
  * Sets the value of an output.
  *
  * @param     name     name of the output to set
@@ -28092,6 +28113,14 @@ function setFailed(message) {
  */
 function error(message, properties = {}) {
     issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
+/**
+ * Adds a warning issue
+ * @param message warning issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
+ */
+function warning(message, properties = {}) {
+    issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Writes info to log with console.log.
@@ -30919,9 +30948,10 @@ function buildHeaders(apiKey) {
 }
 async function run() {
     try {
-        const agentId = getInput('agent_id', { required: true });
+        const agentIdInput = getInput('agent_id');
         const configFile = getInput('config_file', { required: true });
         const apiKey = getInput('anthropic_api_key', { required: true });
+        const allowCreation = getBooleanInput('allow_creation');
         const workspace = process.env.GITHUB_WORKSPACE ?? '.';
         const filePath = path.resolve(workspace, configFile);
         info(`Reading agent configuration from ${filePath}`);
@@ -30930,7 +30960,41 @@ async function run() {
         if (!agentConfig || typeof agentConfig !== 'object') {
             throw new Error(`Invalid or empty YAML in ${configFile}`);
         }
+        const configId = typeof agentConfig.id === 'string' ? agentConfig.id : undefined;
+        if (agentIdInput && configId && agentIdInput !== configId) {
+            throw new Error(`agent_id input (${agentIdInput}) does not match id in ${configFile} (${configId}). ` +
+                `Remove one of them or make them match.`);
+        }
         const headers = buildHeaders(apiKey);
+        const agentId = agentIdInput || configId;
+        if (!agentId) {
+            if (!allowCreation) {
+                throw new Error(`No agent ID provided. Set the agent_id input, add an id field to ${configFile}, ` +
+                    `or set allow_creation to create a new agent.`);
+            }
+            info('No agent ID provided. Creating a new agent...');
+            const createBody = { ...agentConfig };
+            if ('version' in createBody) {
+                warning('Ignoring version field in config when creating an agent');
+                delete createBody.version;
+            }
+            const createResponse = await fetch(`${ANTHROPIC_API_BASE}/agents`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(createBody)
+            });
+            if (!createResponse.ok) {
+                const body = await createResponse.text();
+                throw new Error(`Failed to create agent: ${createResponse.status} ${createResponse.statusText}\n${body}`);
+            }
+            const createdAgent = (await createResponse.json());
+            const createdId = createdAgent.id;
+            const createdVersion = createdAgent.version;
+            info(`Agent ${createdId} created successfully. Version: ${createdVersion}`);
+            setOutput('agent_id', createdId);
+            setOutput('version', String(createdVersion));
+            return;
+        }
         const agentUrl = `${ANTHROPIC_API_BASE}/agents/${agentId}`;
         let version;
         if ('version' in agentConfig) {
@@ -30949,8 +31013,10 @@ async function run() {
             version = currentAgent.version;
             info(`Current agent version: ${version}`);
         }
-        // Build update body: config + resolved version (overrides any version in config)
+        // Build update body: config + resolved version (overrides any version in
+        // config). The agent ID is part of the URL, so drop it from the body.
         const updateBody = { ...agentConfig, version };
+        delete updateBody.id;
         // POST to update the agent
         info(`Updating agent ${agentId}...`);
         const postResponse = await fetch(agentUrl, {
@@ -30965,6 +31031,7 @@ async function run() {
         const updatedAgent = (await postResponse.json());
         const newVersion = updatedAgent.version;
         info(`Agent ${agentId} updated successfully. New version: ${newVersion}`);
+        setOutput('agent_id', agentId);
         setOutput('version', String(newVersion));
     }
     catch (error) {

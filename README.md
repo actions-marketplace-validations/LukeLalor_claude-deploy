@@ -34,7 +34,6 @@ jobs:
         id: deploy
         uses: LukeLalor/claude-deploy@v1
         with:
-          agent_id: ${{ vars.AGENT_ID }}
           config_file: agents/my-agent.yml
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -44,6 +43,7 @@ jobs:
 ### agents/my-agent.yml
 
 ```yaml
+id: agent_abc123
 name: My Agent
 description: Does something useful
 model:
@@ -51,6 +51,10 @@ model:
   speed: standard
 system: You are a helpful assistant.
 ```
+
+The agent to update is identified by the `id` field in the config file.
+Alternatively, omit `id` and pass the `agent_id` input instead (e.g.
+`agent_id: ${{ vars.AGENT_ID }}`). If both are set they must match.
 
 To bootstrap your config file from an existing agent:
 
@@ -60,17 +64,27 @@ curl -s https://api.anthropic.com/v1/agents/$AGENT_ID -H 'anthropic-version: 202
 
 ## Inputs
 
-| Input               | Required | Description                                                      |
-| ------------------- | -------- | ---------------------------------------------------------------- |
-| `agent_id`          | Yes      | The ID of the Claude agent to update                             |
-| `config_file`       | Yes      | Path to the agent YAML config file (relative to repository root) |
-| `anthropic_api_key` | Yes      | Anthropic API key with permission to manage agents               |
+| Input               | Required | Description                                                             |
+| ------------------- | -------- | ----------------------------------------------------------------------- |
+| `agent_id`          | No       | The ID of the agent to update. Optional if the config file has an `id`  |
+| `config_file`       | Yes      | Path to the agent YAML config file (relative to repository root)        |
+| `anthropic_api_key` | Yes      | Anthropic API key with permission to manage agents                      |
+| `allow_creation`    | No       | Create a new agent when no agent ID is provided anywhere. Default false |
 
 ## Outputs
 
-| Output    | Description                        |
-| --------- | ---------------------------------- |
-| `version` | The agent version after the update |
+| Output     | Description                            |
+| ---------- | -------------------------------------- |
+| `agent_id` | The ID of the agent created or updated |
+| `version`  | The agent version after the update     |
+
+## Creating agents
+
+With `allow_creation: true`, the action creates a new agent when no agent ID is
+provided via the `agent_id` input or the config file's `id` field. The new
+agent's ID is available in the `agent_id` output — add it to your config file
+(or store it as a repository variable) so subsequent runs update the same agent
+instead of creating another one.
 
 ## Pinning a version
 
